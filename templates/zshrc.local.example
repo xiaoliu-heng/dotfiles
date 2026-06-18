@@ -1,0 +1,4 @@
+# Machine-specific private values. This file is intentionally not tracked.
+#
+# export EXAMPLE_SERVICE_URL="https://example.com"
+# export EXAMPLE_SERVICE_TOKEN="..."

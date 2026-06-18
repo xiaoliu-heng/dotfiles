@@ -1,0 +1,8 @@
+.DS_Store
+
+# Local machine-only secrets and overrides.
+.zshrc.local
+*.local
+
+# Runtime output.
+*.log
