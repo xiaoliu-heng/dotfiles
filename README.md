@@ -26,14 +26,16 @@ clone the repo, run one script, get the same terminal ergonomics everywhere.
 
 ## Supported Systems
 
-| System | Preferred install path | No sudo fallback |
+| System | Preferred install path | User-local fallback |
 | --- | --- | --- |
-| macOS | Homebrew + `Brewfile` | micromamba under `~/.local/share/dotfiles` |
-| Ubuntu | `apt-get` | micromamba under `~/.local/share/dotfiles` |
-| Arch Linux | `pacman` | micromamba under `~/.local/share/dotfiles` |
+| macOS | Homebrew + `Brewfile` | direct binaries under `~/.local/bin`; optional micromamba |
+| Ubuntu | `apt-get` | direct binaries under `~/.local/bin`; optional micromamba |
+| Arch Linux | `pacman` | direct binaries under `~/.local/bin`; optional micromamba |
 
-The fallback links binaries into `~/.local/bin`, so the tools remain isolated to
-your user account.
+The lightweight fallback downloads release binaries for tools that support it,
+such as `lazygit` and `delta`, into `~/.local/bin`. If required tools still
+cannot be installed that way, the installer asks before using micromamba under
+`~/.local/share/dotfiles`.
 
 ## Quick Start
 
@@ -107,5 +109,6 @@ The repository ignores local override files by default.
 - `~/.zshrc` is not stored in this repository.
 - The installer only owns a marked block inside `~/.zshrc`.
 - Existing managed config files are backed up before symlinking.
-- User-local installs live under `~/.local/share/dotfiles`.
+- User-local binaries live under `~/.local/bin`.
+- micromamba installs, when explicitly accepted, live under `~/.local/share/dotfiles`.
 - Secrets belong in `~/.zshrc.local`, not in git.

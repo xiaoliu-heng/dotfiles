@@ -61,6 +61,95 @@ choose_install_scope() {
   done
 }
 
+fallback_to_user_install() {
+  info "$1"
+
+  if [ "$INSTALL_SCOPE" = "user" ]; then
+    install_user_local_binaries
+  else
+    if [ ! -t 0 ]; then
+      info "Rerun with DOTFILES_INSTALL_SCOPE=user to allow user-local fallback installs."
+      exit 1
+    fi
+
+    while :; do
+      printf '%s' "Install missing lightweight tools under your user directory? [y/N] "
+      read -r answer
+
+      case "$answer" in
+        y|Y|yes|Yes|YES)
+          install_user_local_binaries
+          break
+          ;;
+        ""|n|N|no|No|NO)
+          info "User-local install declined."
+          exit 1
+          ;;
+        *)
+          info "Please answer 'y' or 'n'."
+          ;;
+      esac
+    done
+  fi
+
+  missing=$(missing_required_tools)
+  if [ -z "$missing" ]; then
+    return
+  fi
+
+  info "Still missing required tools:$missing"
+
+  if [ "$INSTALL_SCOPE" = "user" ]; then
+    prompt_micromamba_install
+    return
+  fi
+
+  while :; do
+    printf '%s' "Install remaining tools with micromamba under your user directory? [y/N] "
+    read -r answer
+
+    case "$answer" in
+      y|Y|yes|Yes|YES)
+        install_with_micromamba
+        return
+        ;;
+      ""|n|N|no|No|NO)
+        info "User-local install declined."
+        exit 1
+        ;;
+      *)
+        info "Please answer 'y' or 'n'."
+        ;;
+    esac
+  done
+}
+
+prompt_micromamba_install() {
+  if [ ! -t 0 ]; then
+    info "Rerun interactively to allow micromamba, or install the missing tools globally."
+    exit 1
+  fi
+
+  while :; do
+    printf '%s' "Direct binary install cannot cover all missing tools. Use micromamba under your user directory? [y/N] "
+    read -r answer
+
+    case "$answer" in
+      y|Y|yes|Yes|YES)
+        install_with_micromamba
+        return
+        ;;
+      ""|n|N|no|No|NO)
+        info "micromamba install declined."
+        exit 1
+        ;;
+      *)
+        info "Please answer 'y' or 'n'."
+        ;;
+    esac
+  done
+}
+
 download() {
   url=$1
   output=$2
@@ -179,52 +268,127 @@ install_with_micromamba() {
   done
 }
 
-install_packages() {
-  if has brew; then
-    info "Installing packages with Homebrew..."
-    if brew bundle --file="$DOTFILES_DIR/Brewfile"; then
-      return
-    fi
-    info "Homebrew install failed. Falling back to user-local binaries."
-    install_with_micromamba
-    return
+github_latest_asset_url() {
+  repo=$1
+  asset_regex=$2
+  tmp_dir=$(mktemp -d)
+  release_json="$tmp_dir/release.json"
+
+  download "https://api.github.com/repos/$repo/releases/latest" "$release_json"
+  asset_url=$(
+    sed -n 's/.*"browser_download_url": "\([^"]*\)".*/\1/p' "$release_json" |
+      awk -v asset_regex="$asset_regex" '$0 ~ asset_regex { print; exit }'
+  )
+
+  rm -rf "$tmp_dir"
+
+  if [ -z "$asset_url" ]; then
+    return 1
   fi
 
-  if has apt-get && has_sudo; then
-    info "Installing packages with apt-get..."
-    if sudo apt-get update && sudo apt-get install -y curl git tmux zsh; then
-      return
-    fi
-    info "apt-get install failed. Falling back to user-local binaries."
-    install_with_micromamba
-    return
-  fi
-
-  if has dnf && has_sudo; then
-    info "Installing packages with dnf..."
-    if sudo dnf install -y curl git tmux zsh lazygit git-delta; then
-      return
-    fi
-    info "dnf install failed. Falling back to user-local binaries."
-    install_with_micromamba
-    return
-  fi
-
-  if has pacman && has_sudo; then
-    info "Installing packages with pacman..."
-    if sudo pacman -Sy --needed curl git tmux zsh lazygit git-delta; then
-      return
-    fi
-    info "pacman install failed. Falling back to user-local binaries."
-    install_with_micromamba
-    return
-  fi
-
-  info "No usable global package manager path found. Installing tools into the user home directory."
-  install_with_micromamba
+  printf '%s\n' "$asset_url"
 }
 
-ensure_required_tools() {
+install_lazygit_binary() {
+  if has lazygit; then
+    return 0
+  fi
+
+  os=$(uname -s)
+  arch=$(uname -m)
+
+  case "$os:$arch" in
+    Darwin:arm64) asset_regex='lazygit_.*_Darwin_arm64\.tar\.gz$' ;;
+    Darwin:x86_64) asset_regex='lazygit_.*_Darwin_x86_64\.tar\.gz$' ;;
+    Linux:aarch64|Linux:arm64) asset_regex='lazygit_.*_Linux_arm64\.tar\.gz$' ;;
+    Linux:x86_64|Linux:amd64) asset_regex='lazygit_.*_Linux_x86_64\.tar\.gz$' ;;
+    *)
+      info "No lazygit binary install rule for $os $arch."
+      return 1
+      ;;
+  esac
+
+  tmp_dir=$(mktemp -d)
+  archive="$tmp_dir/lazygit.tar.gz"
+
+  if ! asset_url=$(github_latest_asset_url jesseduffield/lazygit "$asset_regex"); then
+    rm -rf "$tmp_dir"
+    info "Could not find a lazygit release asset for $os $arch."
+    return 1
+  fi
+
+  info "Installing lazygit under $LOCAL_BIN..."
+  download "$asset_url" "$archive"
+  tar -xzf "$archive" -C "$tmp_dir"
+
+  if [ ! -x "$tmp_dir/lazygit" ]; then
+    rm -rf "$tmp_dir"
+    info "Downloaded lazygit archive did not contain an executable lazygit binary."
+    return 1
+  fi
+
+  mv "$tmp_dir/lazygit" "$LOCAL_BIN/lazygit"
+  chmod +x "$LOCAL_BIN/lazygit"
+  rm -rf "$tmp_dir"
+}
+
+install_delta_binary() {
+  if has delta; then
+    return 0
+  fi
+
+  os=$(uname -s)
+  arch=$(uname -m)
+
+  case "$os:$arch" in
+    Darwin:arm64) asset_regex='delta-.*-aarch64-apple-darwin\.tar\.gz$' ;;
+    Darwin:x86_64) asset_regex='delta-.*-x86_64-apple-darwin\.tar\.gz$' ;;
+    Linux:aarch64|Linux:arm64) asset_regex='delta-.*-aarch64-unknown-linux-gnu\.tar\.gz$' ;;
+    Linux:x86_64|Linux:amd64) asset_regex='delta-.*-x86_64-unknown-linux-gnu\.tar\.gz$' ;;
+    *)
+      info "No delta binary install rule for $os $arch."
+      return 1
+      ;;
+  esac
+
+  tmp_dir=$(mktemp -d)
+  archive="$tmp_dir/delta.tar.gz"
+
+  if ! asset_url=$(github_latest_asset_url dandavison/delta "$asset_regex"); then
+    rm -rf "$tmp_dir"
+    info "Could not find a delta release asset for $os $arch."
+    return 1
+  fi
+
+  info "Installing delta under $LOCAL_BIN..."
+  download "$asset_url" "$archive"
+  tar -xzf "$archive" -C "$tmp_dir"
+  delta_bin=$(find "$tmp_dir" -type f -name delta | sed -n '1p')
+
+  if [ -z "$delta_bin" ]; then
+    rm -rf "$tmp_dir"
+    info "Downloaded delta archive did not contain a delta binary."
+    return 1
+  fi
+
+  mv "$delta_bin" "$LOCAL_BIN/delta"
+  chmod +x "$LOCAL_BIN/delta"
+  rm -rf "$tmp_dir"
+}
+
+install_user_local_binaries() {
+  mkdir -p "$LOCAL_BIN"
+
+  if ! has lazygit; then
+    install_lazygit_binary || true
+  fi
+
+  if ! has delta; then
+    install_delta_binary || true
+  fi
+}
+
+missing_required_tools() {
   missing=
 
   for tool in git tmux zsh lazygit delta; do
@@ -233,9 +397,54 @@ ensure_required_tools() {
     fi
   done
 
+  printf '%s\n' "$missing"
+}
+
+install_packages() {
+  if has brew; then
+    info "Installing packages with Homebrew..."
+    if brew bundle --file="$DOTFILES_DIR/Brewfile"; then
+      return
+    fi
+    fallback_to_user_install "Homebrew install failed."
+    return
+  fi
+
+  if has apt-get && has_sudo; then
+    info "Installing packages with apt-get..."
+    if sudo apt-get update && sudo apt-get install -y curl git tmux zsh; then
+      return
+    fi
+    fallback_to_user_install "apt-get install failed."
+    return
+  fi
+
+  if has dnf && has_sudo; then
+    info "Installing packages with dnf..."
+    if sudo dnf install -y curl git tmux zsh lazygit git-delta; then
+      return
+    fi
+    fallback_to_user_install "dnf install failed."
+    return
+  fi
+
+  if has pacman && has_sudo; then
+    info "Installing packages with pacman..."
+    if sudo pacman -Sy --needed curl git tmux zsh lazygit git-delta; then
+      return
+    fi
+    fallback_to_user_install "pacman install failed."
+    return
+  fi
+
+  fallback_to_user_install "No usable global package manager path found."
+}
+
+ensure_required_tools() {
+  missing=$(missing_required_tools)
+
   if [ -n "$missing" ]; then
-    info "Missing required tools:$missing"
-    install_with_micromamba
+    fallback_to_user_install "Missing required tools:$missing"
   fi
 }
 
@@ -383,7 +592,7 @@ main() {
 
   if [ "$INSTALL_SCOPE" = "user" ]; then
     info "Installing tools into the user home directory."
-    install_with_micromamba
+    install_user_local_binaries
   else
     install_homebrew_if_needed
     install_packages
