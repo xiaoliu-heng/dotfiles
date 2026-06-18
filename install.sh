@@ -298,10 +298,10 @@ install_lazygit_binary() {
   arch=$(uname -m)
 
   case "$os:$arch" in
-    Darwin:arm64) asset_regex='lazygit_.*_Darwin_arm64\.tar\.gz$' ;;
-    Darwin:x86_64) asset_regex='lazygit_.*_Darwin_x86_64\.tar\.gz$' ;;
-    Linux:aarch64|Linux:arm64) asset_regex='lazygit_.*_Linux_arm64\.tar\.gz$' ;;
-    Linux:x86_64|Linux:amd64) asset_regex='lazygit_.*_Linux_x86_64\.tar\.gz$' ;;
+    Darwin:arm64) asset_regex='lazygit_.*_[Dd]arwin_arm64\.tar\.gz$' ;;
+    Darwin:x86_64) asset_regex='lazygit_.*_[Dd]arwin_x86_64\.tar\.gz$' ;;
+    Linux:aarch64|Linux:arm64) asset_regex='lazygit_.*_[Ll]inux_arm64\.tar\.gz$' ;;
+    Linux:x86_64|Linux:amd64) asset_regex='lazygit_.*_[Ll]inux_x86_64\.tar\.gz$' ;;
     *)
       info "No lazygit binary install rule for $os $arch."
       return 1
