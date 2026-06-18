@@ -7,6 +7,7 @@ LOCAL_BIN="$HOME/.local/bin"
 MAMBA_ROOT_PREFIX="$HOME/.local/share/dotfiles/micromamba"
 MAMBA_ENV="$MAMBA_ROOT_PREFIX/envs/dotfiles"
 PATH="$LOCAL_BIN:$PATH"
+INSTALL_SCOPE="${DOTFILES_INSTALL_SCOPE:-}"
 export PATH
 
 info() {
@@ -18,7 +19,46 @@ has() {
 }
 
 has_sudo() {
-  has sudo && sudo -n true >/dev/null 2>&1
+  has sudo
+}
+
+choose_install_scope() {
+  case "$INSTALL_SCOPE" in
+    global|user)
+      return
+      ;;
+    "")
+      ;;
+    *)
+      info "Invalid DOTFILES_INSTALL_SCOPE=$INSTALL_SCOPE. Use 'global' or 'user'."
+      exit 1
+      ;;
+  esac
+
+  if [ ! -t 0 ]; then
+    INSTALL_SCOPE=global
+    info "No interactive input available. Defaulting to global package manager install when available."
+    return
+  fi
+
+  while :; do
+    printf '%s' "Install tools globally with the system package manager, or under your user directory? [global/user] "
+    read -r answer
+
+    case "$answer" in
+      ""|g|G|global|Global|GLOBAL)
+        INSTALL_SCOPE=global
+        return
+        ;;
+      u|U|user|User|USER)
+        INSTALL_SCOPE=user
+        return
+        ;;
+      *)
+        info "Please answer 'global' or 'user'."
+        ;;
+    esac
+  done
 }
 
 download() {
@@ -74,7 +114,7 @@ install_homebrew_if_needed() {
   fi
 
   if ! has_sudo; then
-    info "No passwordless sudo available. Skipping Homebrew install and using user-local binaries."
+    info "sudo is not available. Skipping Homebrew install and using user-local binaries."
     return
   fi
 
@@ -339,8 +379,16 @@ configure_shell() {
 }
 
 main() {
-  install_homebrew_if_needed
-  install_packages
+  choose_install_scope
+
+  if [ "$INSTALL_SCOPE" = "user" ]; then
+    info "Installing tools into the user home directory."
+    install_with_micromamba
+  else
+    install_homebrew_if_needed
+    install_packages
+  fi
+
   ensure_required_tools
   ensure_local_bin_tools
   install_oh_my_zsh
