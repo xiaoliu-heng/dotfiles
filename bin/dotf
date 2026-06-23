@@ -1,0 +1,160 @@
+#!/usr/bin/env sh
+set -eu
+
+DOTFILES_HOME="${DOTFILES_HOME:-$HOME/.dotfiles}"
+DOTFILES_HOME=${DOTFILES_HOME%/}
+LOCAL_BIN="$HOME/.local/bin"
+MARKER_START="# >>> dotfiles managed >>>"
+MARKER_END="# <<< dotfiles managed <<<"
+
+info() {
+  printf '%s\n' "$*"
+}
+
+usage() {
+  cat <<'EOF'
+Usage: dotf <command>
+
+Commands:
+  update             Update dotfiles with git and rerun the installer
+  uninstall [--yes]  Remove dotfiles-managed links, shell block, command, and repo
+  help               Show this help
+EOF
+}
+
+require_checkout() {
+  if [ ! -d "$DOTFILES_HOME/.git" ]; then
+    info "No managed dotfiles checkout found at $DOTFILES_HOME."
+    exit 1
+  fi
+}
+
+ensure_clean_checkout() {
+  if [ -n "$(git -C "$DOTFILES_HOME" status --porcelain)" ]; then
+    info "$DOTFILES_HOME has uncommitted changes. Commit, stash, or discard them before updating."
+    exit 1
+  fi
+}
+
+update_dotfiles() {
+  require_checkout
+  ensure_clean_checkout
+
+  info "Updating dotfiles in $DOTFILES_HOME..."
+  git -C "$DOTFILES_HOME" pull --ff-only
+  "$DOTFILES_HOME/install.sh"
+}
+
+confirm_uninstall() {
+  if [ "${1:-}" = "--yes" ]; then
+    return
+  fi
+
+  if [ ! -t 0 ]; then
+    info "Refusing non-interactive uninstall without --yes."
+    exit 1
+  fi
+
+  printf '%s' "Remove dotfiles-managed configuration and $DOTFILES_HOME? [y/N] "
+  read -r answer
+  case "$answer" in
+    y|Y|yes|Yes|YES) ;;
+    *)
+      info "Uninstall cancelled."
+      exit 0
+      ;;
+  esac
+}
+
+remove_link_if_managed() {
+  path=$1
+
+  if [ ! -L "$path" ]; then
+    return
+  fi
+
+  target=$(readlink "$path")
+  case "$target" in
+    "$DOTFILES_HOME"/*)
+      rm -f "$path"
+      info "Removed $path"
+      ;;
+  esac
+}
+
+remove_zshrc_block() {
+  zshrc="$HOME/.zshrc"
+
+  if [ ! -f "$zshrc" ]; then
+    return
+  fi
+
+  tmp_file=$(mktemp)
+  awk -v marker_start="$MARKER_START" -v marker_end="$MARKER_END" '
+    $0 == marker_start { skip = 1; next }
+    $0 == marker_end { skip = 0; next }
+    !skip { print }
+  ' "$zshrc" >"$tmp_file"
+  mv "$tmp_file" "$zshrc"
+  info "Removed dotfiles managed block from $zshrc"
+}
+
+remove_dotf_command() {
+  path="$LOCAL_BIN/dotf"
+
+  if [ -L "$path" ] && [ "$(readlink "$path")" = "$DOTFILES_HOME/bin/dotf" ]; then
+    rm -f "$path"
+    info "Removed $path"
+  fi
+}
+
+remove_checkout() {
+  case "$DOTFILES_HOME" in
+    ""|"/"|"$HOME")
+      info "Refusing to remove unsafe DOTFILES_HOME=$DOTFILES_HOME"
+      exit 1
+      ;;
+  esac
+
+  if [ -d "$DOTFILES_HOME" ]; then
+    rm -rf "$DOTFILES_HOME"
+    info "Removed $DOTFILES_HOME"
+  fi
+}
+
+uninstall_dotfiles() {
+  confirm_uninstall "${1:-}"
+
+  remove_link_if_managed "$HOME/.tmux.conf"
+  remove_link_if_managed "$HOME/.config/lazygit/config.yml"
+  remove_zshrc_block
+  remove_dotf_command
+  remove_checkout
+
+  info "Done. Kept tools, Oh My Zsh, zsh plugins, and $HOME/.zshrc.local."
+}
+
+case "${1:-help}" in
+  update)
+    update_dotfiles
+    ;;
+  uninstall)
+    shift
+    case "${1:-}" in
+      ""|"--yes")
+        uninstall_dotfiles "${1:-}"
+        ;;
+      *)
+        usage
+        exit 1
+        ;;
+    esac
+    ;;
+  help|--help|-h)
+    usage
+    ;;
+  *)
+    usage
+    exit 1
+    ;;
+esac

@@ -2,6 +2,8 @@
 set -eu
 
 DOTFILES_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+DOTFILES_HOME="${DOTFILES_HOME:-$HOME/.dotfiles}"
+DOTFILES_HOME=${DOTFILES_HOME%/}
 BACKUP_DIR="$HOME/.dotfiles-backup/$(date +%Y%m%d-%H%M%S)"
 LOCAL_BIN="$HOME/.local/bin"
 MAMBA_ROOT_PREFIX="$HOME/.local/share/dotfiles/micromamba"
@@ -20,6 +22,62 @@ has() {
 
 has_sudo() {
   has sudo
+}
+
+bootstrap_dotfiles_home() {
+  case "$DOTFILES_HOME" in
+    ""|"/"|"$HOME")
+      info "Refusing unsafe DOTFILES_HOME=$DOTFILES_HOME"
+      exit 1
+      ;;
+  esac
+
+  if [ "$DOTFILES_DIR" = "$DOTFILES_HOME" ]; then
+    return
+  fi
+
+  if [ -d "$DOTFILES_HOME/.git" ]; then
+    current_origin=$(git -C "$DOTFILES_DIR" config --get remote.origin.url 2>/dev/null || :)
+    target_origin=$(git -C "$DOTFILES_HOME" config --get remote.origin.url 2>/dev/null || :)
+
+    if [ -n "$current_origin" ] && [ "$current_origin" = "$target_origin" ]; then
+      info "Using managed dotfiles checkout at $DOTFILES_HOME"
+      exec "$DOTFILES_HOME/install.sh"
+    fi
+
+    info "$DOTFILES_HOME already exists and is not the expected dotfiles repository."
+    info "Move it aside or set DOTFILES_HOME to another path before installing."
+    exit 1
+  fi
+
+  if [ -e "$DOTFILES_HOME" ]; then
+    info "$DOTFILES_HOME already exists and is not a git checkout."
+    info "Move it aside or set DOTFILES_HOME to another path before installing."
+    exit 1
+  fi
+
+  if ! git -C "$DOTFILES_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    info "This installer must run from a git checkout so dotf can update it later."
+    exit 1
+  fi
+
+  origin=$(git -C "$DOTFILES_DIR" config --get remote.origin.url 2>/dev/null || :)
+  if [ -z "$origin" ]; then
+    info "No git remote named origin found. Add one before installing dotf-managed dotfiles."
+    exit 1
+  fi
+
+  branch=$(git -C "$DOTFILES_DIR" branch --show-current 2>/dev/null || :)
+  mkdir -p "$(dirname "$DOTFILES_HOME")"
+
+  info "Cloning dotfiles into managed checkout at $DOTFILES_HOME..."
+  if [ -n "$branch" ]; then
+    git clone --branch "$branch" "$origin" "$DOTFILES_HOME"
+  else
+    git clone "$origin" "$DOTFILES_HOME"
+  fi
+
+  exec "$DOTFILES_HOME/install.sh"
 }
 
 choose_install_scope() {
@@ -457,6 +515,10 @@ ensure_local_bin_tools() {
   fi
 }
 
+install_dotf_command() {
+  link_file "$DOTFILES_DIR/bin/dotf" "$LOCAL_BIN/dotf"
+}
+
 install_oh_my_zsh() {
   if [ -d "$HOME/.oh-my-zsh" ]; then
     info "Oh My Zsh already installed."
@@ -588,6 +650,7 @@ configure_shell() {
 }
 
 main() {
+  bootstrap_dotfiles_home
   choose_install_scope
 
   if [ "$INSTALL_SCOPE" = "user" ]; then
@@ -600,6 +663,7 @@ main() {
 
   ensure_required_tools
   ensure_local_bin_tools
+  install_dotf_command
   install_oh_my_zsh
   install_zsh_plugins
   configure_zshrc
